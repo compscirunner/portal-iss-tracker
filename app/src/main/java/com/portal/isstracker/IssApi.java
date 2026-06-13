@@ -9,8 +9,11 @@ import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.TimeZone;
 
 /**
  * Thin client for the two free, key-less APIs the tracker uses:
@@ -48,6 +51,57 @@ final class IssApi {
         p.visibility = o.optString("visibility", "");
         p.timestamp = o.optLong("timestamp", System.currentTimeMillis() / 1000L);
         return p;
+    }
+
+    /** Next upcoming launch (The Space Devs' Launch Library 2 — free, no key). */
+    static final class LaunchInfo {
+        String name = "", rocket = "", provider = "", pad = "", status = "";
+        long netMs;   // launch time (epoch millis), 0 if unknown
+    }
+
+    static LaunchInfo fetchNextLaunch() throws Exception {
+        String json = httpGet(
+                "https://ll.thespacedevs.com/2.2.0/launch/upcoming/?limit=1&hide_recent_previous=true");
+        JSONArray results = new JSONObject(json).getJSONArray("results");
+        if (results.length() == 0) return null;
+        JSONObject r = results.getJSONObject(0);
+
+        LaunchInfo li = new LaunchInfo();
+        li.name = r.optString("name", "");
+        li.status = r.optJSONObject("status") != null
+                ? r.getJSONObject("status").optString("name", "") : "";
+        li.provider = nested(r, "launch_service_provider", "name");
+        JSONObject rocket = r.optJSONObject("rocket");
+        if (rocket != null && rocket.optJSONObject("configuration") != null)
+            li.rocket = rocket.getJSONObject("configuration").optString("name", "");
+        JSONObject pad = r.optJSONObject("pad");
+        if (pad != null) {
+            String padName = pad.optString("name", "");
+            String loc = pad.optJSONObject("location") != null
+                    ? pad.getJSONObject("location").optString("name", "") : "";
+            li.pad = loc.isEmpty() ? padName : (padName.isEmpty() ? loc : padName + ", " + loc);
+        }
+        li.netMs = parseIso(r.optString("net", ""));
+        return li;
+    }
+
+    private static String nested(JSONObject o, String key, String sub) {
+        JSONObject child = o.optJSONObject(key);
+        return child != null ? child.optString(sub, "") : "";
+    }
+
+    /** Parse an ISO-8601 UTC timestamp like 2026-06-15T03:40:00Z to epoch millis. */
+    private static long parseIso(String iso) {
+        if (iso == null || iso.isEmpty()) return 0;
+        SimpleDateFormat fmt = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US);
+        fmt.setTimeZone(TimeZone.getTimeZone("UTC"));
+        try {
+            // Trim a trailing 'Z' and any fractional seconds.
+            String s = iso.replace("Z", "");
+            int dot = s.indexOf('.');
+            if (dot > 0) s = s.substring(0, dot);
+            return fmt.parse(s).getTime();
+        } catch (Exception e) { return 0; }
     }
 
     static List<CrewMember> fetchCrew() throws Exception {

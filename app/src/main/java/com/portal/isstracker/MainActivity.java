@@ -26,8 +26,9 @@ import java.util.concurrent.Executors;
  */
 public class MainActivity extends Activity {
 
-    private static final long POS_INTERVAL_MS  = 5_000;       // position refresh
-    private static final long CREW_INTERVAL_MS = 5 * 60_000;  // crew refresh
+    private static final long POS_INTERVAL_MS    = 5_000;        // position refresh
+    private static final long CREW_INTERVAL_MS   = 5 * 60_000;   // crew refresh
+    private static final long LAUNCH_INTERVAL_MS = 30 * 60_000;  // next-launch refresh
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final ExecutorService net = Executors.newSingleThreadExecutor();
@@ -36,8 +37,10 @@ public class MainActivity extends Activity {
     private TrackerView tracker;
     private CrewView crewView;
     private FeedView feedView;
+    private LaunchBar launchBar;
     private volatile boolean running = true;
     private long lastCrewFetch = 0;
+    private long lastLaunchFetch = 0;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -71,7 +74,16 @@ public class MainActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT, 0.64f));
         root.addView(rightCol, new LinearLayout.LayoutParams(0,
                 LinearLayout.LayoutParams.MATCH_PARENT, 0.36f));
-        setContentView(root);
+
+        // Stack the main content over a full-width next-launch ticker.
+        launchBar = new LaunchBar(this);
+        LinearLayout outer = new LinearLayout(this);
+        outer.setOrientation(LinearLayout.VERTICAL);
+        outer.addView(root, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+        outer.addView(launchBar, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(46)));
+        setContentView(outer);
 
         clock.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
     }
@@ -145,6 +157,7 @@ public class MainActivity extends Activity {
                 }
             });
             maybeFetchCrew();
+            maybeFetchLaunch();
             ui.postDelayed(this, POS_INTERVAL_MS);
         }
     };
@@ -163,6 +176,21 @@ public class MainActivity extends Activity {
             } catch (Exception e) {
                 lastCrewFetch = 0;   // let the next poll retry instead of waiting 5 min
                 ui.post(() -> crewView.setStatus("Crew feed unavailable — retrying…"));
+            }
+        });
+    }
+
+    private void maybeFetchLaunch() {
+        long now = System.currentTimeMillis();
+        if (now - lastLaunchFetch < LAUNCH_INTERVAL_MS) return;
+        lastLaunchFetch = now;
+        net.execute(() -> {
+            try {
+                IssApi.LaunchInfo li = IssApi.fetchNextLaunch();
+                ui.post(() -> launchBar.setLaunch(li));
+            } catch (Exception e) {
+                lastLaunchFetch = 0;   // retry next poll
+                ui.post(() -> launchBar.setStatus("Launch feed unavailable"));
             }
         });
     }
