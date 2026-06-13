@@ -12,6 +12,10 @@ space-weather, launch, Deep Space Network and asteroid widgets — all from free
 |:---:|:---:|
 | ![landscape](docs/dashboard-landscape.png) | ![portrait](docs/dashboard-portrait.png) |
 
+> **Making something for the Meta Portal?** Tag your repo with the
+> [`meta-portal`](https://github.com/topics/meta-portal) GitHub topic so we can all
+> find each other's sideloadable Portal apps in one place.
+
 ## What it shows
 
 - **Live ISS video (hero panel)** — [Sen](https://www.sen.com/)'s real 4K cameras on
