@@ -2,6 +2,12 @@ plugins {
     id 'com.android.application'
 }
 
+// Release signing is configured only if keystore.properties exists (kept out of
+// git). Without it, assembleDebug still works; assembleRelease is just unsigned.
+def keystorePropsFile = rootProject.file("keystore.properties")
+def keystoreProps = new Properties()
+if (keystorePropsFile.exists()) keystoreProps.load(new FileInputStream(keystorePropsFile))
+
 android {
     namespace 'com.portal.isstracker'
     compileSdk 34
@@ -14,8 +20,23 @@ android {
         versionName '1.0'
     }
 
+    signingConfigs {
+        if (keystorePropsFile.exists()) {
+            release {
+                storeFile file(keystoreProps['storeFile'])
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+            }
+        }
+    }
+
     buildTypes {
         debug { }
+        release {
+            minifyEnabled false
+            if (keystorePropsFile.exists()) signingConfig signingConfigs.release
+        }
     }
 
     compileOptions {
