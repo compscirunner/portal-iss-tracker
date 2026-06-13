@@ -1,3 +1,5 @@
+<img src="docs/icon.png" width="84" align="left" alt="ISS Tracker icon">
+
 # ISS Tracker for Meta Portal
 
 A kiosk-style, NASA-branded **International Space Station dashboard** for a
@@ -80,10 +82,10 @@ No Google Play Services, Maps SDK, or login required — everything is
 
 ### 2a. Install the prebuilt APK (easiest)
 
-Grab `app-debug.apk` from the [Releases](../../releases) page, then:
+Grab `space-portal.apk` from the [Releases](../../releases) page, then:
 
 ```bash
-adb install -r app-debug.apk
+adb install -r space-portal.apk
 adb shell monkey -p com.portal.isstracker -c android.intent.category.LAUNCHER 1
 ```
 
