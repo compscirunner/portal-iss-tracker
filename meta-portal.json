@@ -1,0 +1,9 @@
+{
+  "name": "ISS Tracker",
+  "description": "Live ISS dashboard — 4K video, orbital ground track, crew, space weather, launches & Deep Space Network. All keyless, no Google services.",
+  "package": "com.portal.isstracker",
+  "category": "space",
+  "models": ["portal-plus", "portal-2019"],
+  "screenshots": ["docs/dashboard-landscape.png", "docs/dashboard-portrait.png"],
+  "minSdk": 24
+}
