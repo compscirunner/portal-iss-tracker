@@ -30,5 +30,6 @@ android {
 }
 
 dependencies {
-    // Pure platform app: HttpURLConnection + org.json + Canvas. No GMS, no extra deps.
+    // Pure platform app: HttpURLConnection + org.json + Canvas + a WebView for
+    // the live feed. No GMS, no extra deps.
 }
