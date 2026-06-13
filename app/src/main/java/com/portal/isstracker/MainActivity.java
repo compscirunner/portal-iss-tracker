@@ -6,7 +6,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
 import android.view.WindowManager;
-import android.widget.FrameLayout;
+import android.widget.LinearLayout;
 
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -17,15 +17,13 @@ import java.util.concurrent.Executors;
 
 /**
  * Kiosk-style ISS display for Meta Portal (no Google services needed).
- * Polls the ground position every few seconds and auto-cycles between the
- * map/telemetry view and the people-in-space roster. Tap anywhere to flip.
+ * Shows the live map/telemetry and the people-in-space roster side by side on
+ * one screen, refreshing the ground position every few seconds.
  */
 public class MainActivity extends Activity {
 
-    private static final long POS_INTERVAL_MS  = 5_000;     // position refresh
-    private static final long CREW_INTERVAL_MS = 5 * 60_000; // crew refresh
-    private static final long MAP_DWELL_MS  = 22_000;        // time on map view
-    private static final long CREW_DWELL_MS = 12_000;        // time on crew view
+    private static final long POS_INTERVAL_MS  = 5_000;       // position refresh
+    private static final long CREW_INTERVAL_MS = 5 * 60_000;  // crew refresh
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final ExecutorService net = Executors.newSingleThreadExecutor();
@@ -33,7 +31,6 @@ public class MainActivity extends Activity {
 
     private TrackerView tracker;
     private CrewView crewView;
-    private boolean showingCrew = false;
     private volatile boolean running = true;
     private long lastCrewFetch = 0;
 
@@ -42,13 +39,16 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
-        FrameLayout root = new FrameLayout(this);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.HORIZONTAL);
+
         tracker = new TrackerView(this);
         crewView = new CrewView(this);
-        crewView.setVisibility(View.GONE);
-        root.addView(tracker);
-        root.addView(crewView);
-        root.setOnClickListener(v -> { toggleView(); restartCycle(); });
+        // Map+HUD takes ~72% of the width; crew roster fills the right column.
+        root.addView(tracker, new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.MATCH_PARENT, 0.72f));
+        root.addView(crewView, new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.MATCH_PARENT, 0.28f));
         setContentView(root);
 
         clock.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
@@ -75,7 +75,6 @@ public class MainActivity extends Activity {
         super.onResume();
         running = true;
         ui.post(pollPosition);
-        ui.postDelayed(cycleView, MAP_DWELL_MS);
     }
 
     @Override
@@ -119,30 +118,11 @@ public class MainActivity extends Activity {
                 List<IssApi.CrewMember> crew = IssApi.fetchCrew();
                 ui.post(() -> {
                     crewView.setCrew(crew);
-                    crewView.setStatus("Source: Open Notify  •  " + clock.format(new Date()));
+                    crewView.setStatus("Open Notify  •  " + clock.format(new Date()));
                 });
             } catch (Exception e) {
                 ui.post(() -> crewView.setStatus("Crew feed unavailable"));
             }
         });
-    }
-
-    private final Runnable cycleView = new Runnable() {
-        @Override public void run() {
-            if (!running) return;
-            toggleView();
-            ui.postDelayed(this, showingCrew ? CREW_DWELL_MS : MAP_DWELL_MS);
-        }
-    };
-
-    private void toggleView() {
-        showingCrew = !showingCrew;
-        crewView.setVisibility(showingCrew ? View.VISIBLE : View.GONE);
-        tracker.setVisibility(showingCrew ? View.GONE : View.VISIBLE);
-    }
-
-    private void restartCycle() {
-        ui.removeCallbacks(cycleView);
-        ui.postDelayed(cycleView, showingCrew ? CREW_DWELL_MS : MAP_DWELL_MS);
     }
 }

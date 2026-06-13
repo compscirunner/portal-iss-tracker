@@ -4,96 +4,109 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
-import android.graphics.Color;
+import android.graphics.DashPathEffect;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.view.View;
 
 import java.io.InputStream;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Deque;
 import java.util.List;
 import java.util.Locale;
 
 /**
- * Draws an equirectangular world map letterboxed to fit, plots the ISS at its
- * ground point with a visibility-footprint circle and a trailing ground track,
- * and overlays a flight-display style telemetry HUD.
+ * NASA-branded ISS display: an equirectangular world map letterboxed to fit, the
+ * ISS plotted at its ground point with a visibility-footprint circle and the
+ * predicted orbital ground-track path, under a NASA-blue title bar (meatball + name)
+ * and a flight telemetry strip.
  */
 class TrackerView extends View {
 
-    // Boeing-ish flight-display palette: green labels, white values, magenta target.
-    private static final int LABEL  = 0xFF34D058;
-    private static final int VALUE  = 0xFFFFFFFF;
-    private static final int ACCENT = 0xFFFF2EA6;
-    private static final int TRAIL  = 0x9900E5FF;
-    private static final int PANEL  = 0xB3000A12;
+    // NASA palette.
+    private static final int NASA_BLUE = 0xFF0B3D91;
+    private static final int NASA_RED  = 0xFFFC3D21;
+    private static final int WHITE     = 0xFFFFFFFF;
+    private static final int LABEL     = 0xFFAFC6FF;   // light NASA blue
+    private static final int PANEL     = 0xCC061A3A;   // translucent navy
 
-    private Bitmap world;
+    private Bitmap world, nasa;
     private final Rect srcRect = new Rect();
     private final RectF dstRect = new RectF();
+    private final Rect nasaSrc = new Rect();
+    private final RectF nasaDst = new RectF();
 
     private final Paint mapPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
+    private final Paint logoPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
     private final Paint bg = new Paint();
-    private final Paint trailPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint barPaint = new Paint();
+    private final Paint trackPast = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint trackFuture = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint footprint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint marker = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint crosshair = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint markerFill = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint markerRing = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint panelPaint = new Paint();
     private final Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint value = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint title = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint titlePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint subPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
     private IssApi.Position pos;
     private String status = "Acquiring ISS…";
-    private final Deque<double[]> trail = new ArrayDeque<>();   // {lat, lon}
-    private static final int MAX_TRAIL = 240;
+    private Double prevLat;
+    private boolean northbound = true;
 
-    // The drawn map rectangle (computed each layout); lat/lon map into it.
     private float mapL, mapT, mapW, mapH;
+    private float barH;
 
     TrackerView(Context ctx) {
         super(ctx);
-        loadMap(ctx);
+        world = loadAsset(ctx, "world.jpg");
+        nasa = loadAsset(ctx, "nasa.png");
+        if (world != null) srcRect.set(0, 0, world.getWidth(), world.getHeight());
+        if (nasa != null) nasaSrc.set(0, 0, nasa.getWidth(), nasa.getHeight());
 
         bg.setColor(0xFF000610);
-        trailPaint.setStyle(Paint.Style.STROKE);
-        trailPaint.setColor(TRAIL);
-        trailPaint.setStrokeWidth(dp(2));
+        barPaint.setColor(NASA_BLUE);
+
+        trackPast.setStyle(Paint.Style.STROKE);
+        trackPast.setColor(0xFFFFFFFF);
+        trackPast.setStrokeWidth(dp(2));
+        trackFuture.setStyle(Paint.Style.STROKE);
+        trackFuture.setColor(NASA_RED);
+        trackFuture.setStrokeWidth(dp(2.5f));
+        trackFuture.setPathEffect(new DashPathEffect(new float[]{dp(10), dp(8)}, 0));
+
         footprint.setStyle(Paint.Style.STROKE);
-        footprint.setColor(0x55FF2EA6);
+        footprint.setColor(0x55FFFFFF);
         footprint.setStrokeWidth(dp(1.5f));
-        marker.setColor(ACCENT);
-        crosshair.setColor(ACCENT);
-        crosshair.setStyle(Paint.Style.STROKE);
-        crosshair.setStrokeWidth(dp(1.5f));
+        markerFill.setColor(NASA_RED);
+        markerRing.setStyle(Paint.Style.STROKE);
+        markerRing.setColor(WHITE);
+        markerRing.setStrokeWidth(dp(2.5f));
         panelPaint.setColor(PANEL);
 
         Typeface mono = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD);
+        Typeface sans = Typeface.create("sans-serif-condensed", Typeface.BOLD);
         label.setColor(LABEL); label.setTypeface(mono); label.setTextSize(sp(13));
-        value.setColor(VALUE); value.setTypeface(mono); value.setTextSize(sp(20));
-        title.setColor(LABEL); title.setTypeface(mono); title.setTextSize(sp(16));
-        title.setLetterSpacing(0.15f);
+        value.setColor(WHITE); value.setTypeface(mono); value.setTextSize(sp(20));
+        titlePaint.setColor(WHITE); titlePaint.setTypeface(sans);
+        titlePaint.setTextSize(sp(22)); titlePaint.setLetterSpacing(0.12f);
+        subPaint.setColor(NASA_RED); subPaint.setTypeface(mono); subPaint.setTextSize(sp(13));
+        subPaint.setLetterSpacing(0.18f);
     }
 
-    private void loadMap(Context ctx) {
-        try (InputStream in = ctx.getAssets().open("world.jpg")) {
-            world = BitmapFactory.decodeStream(in);
-            if (world != null) srcRect.set(0, 0, world.getWidth(), world.getHeight());
-        } catch (Exception ignored) { /* drawn as plain dark background */ }
+    private Bitmap loadAsset(Context ctx, String name) {
+        try (InputStream in = ctx.getAssets().open(name)) {
+            return BitmapFactory.decodeStream(in);
+        } catch (Exception e) { return null; }
     }
 
-    /** Push a new fix (called on the UI thread). */
     void setPosition(IssApi.Position p) {
+        if (prevLat != null && p.lat != prevLat) northbound = p.lat > prevLat;
+        prevLat = p.lat;
         this.pos = p;
-        double[] last = trail.peekLast();
-        if (last == null || last[0] != p.lat || last[1] != p.lon) {
-            trail.addLast(new double[]{p.lat, p.lon});
-            while (trail.size() > MAX_TRAIL) trail.removeFirst();
-        }
         invalidate();
     }
 
@@ -101,15 +114,21 @@ class TrackerView extends View {
 
     @Override
     protected void onSizeChanged(int w, int h, int ow, int oh) {
-        // Contain the 2:1 map within the view, centered (letterbox).
-        if (world == null) { mapL = 0; mapT = 0; mapW = w; mapH = h; return; }
-        float ar = (float) world.getWidth() / world.getHeight();
-        float vw = w, vh = h;
-        if (vw / vh > ar) { mapH = vh; mapW = vh * ar; }
-        else { mapW = vw; mapH = vw / ar; }
-        mapL = (vw - mapW) / 2f;
-        mapT = (vh - mapH) / 2f;
-        dstRect.set(mapL, mapT, mapL + mapW, mapT + mapH);
+        barH = dp(56);
+        if (world == null) { mapL = 0; mapT = 0; mapW = w; mapH = h; }
+        else {
+            float ar = (float) world.getWidth() / world.getHeight();
+            if ((float) w / h > ar) { mapH = h; mapW = h * ar; }
+            else { mapW = w; mapH = w / ar; }
+            mapL = (w - mapW) / 2f;
+            mapT = (h - mapH) / 2f;
+            dstRect.set(mapL, mapT, mapL + mapW, mapT + mapH);
+        }
+        if (nasa != null) {
+            float lh = dp(40), lw = lh * nasa.getWidth() / nasa.getHeight();
+            float ly = (barH - lh) / 2f;
+            nasaDst.set(dp(14), ly, dp(14) + lw, ly + lh);
+        }
     }
 
     private float xOf(double lon) { return mapL + (float) ((lon + 180.0) / 360.0) * mapW; }
@@ -120,50 +139,54 @@ class TrackerView extends View {
         c.drawRect(0, 0, getWidth(), getHeight(), bg);
         if (world != null) c.drawBitmap(world, srcRect, dstRect, mapPaint);
 
-        drawTrail(c);
-
         if (pos != null) {
-            // Visibility footprint (great-circle radius -> degrees -> px on the lon axis).
+            // Predicted ground track: solid for the recent past, dashed ahead.
+            buildPath(OrbitTrack.predict(pos.lat, pos.lon, northbound, -28, 0, 1.0), c, trackPast);
+            buildPath(OrbitTrack.predict(pos.lat, pos.lon, northbound, 0, 96, 1.0), c, trackFuture);
+
             if (pos.footprintKm > 0) {
                 float rPx = (float) (pos.footprintKm / 2.0 / 111.0) * (mapW / 360f);
                 c.drawCircle(xOf(pos.lon), yOf(pos.lat), rPx, footprint);
             }
             float mx = xOf(pos.lon), my = yOf(pos.lat);
-            c.drawCircle(mx, my, dp(6), marker);
-            c.drawCircle(mx, my, dp(11), crosshair);
-            c.drawLine(mx - dp(18), my, mx + dp(18), my, crosshair);
-            c.drawLine(mx, my - dp(18), mx, my + dp(18), crosshair);
+            c.drawCircle(mx, my, dp(7), markerFill);
+            c.drawCircle(mx, my, dp(11), markerRing);
         }
 
+        drawTitleBar(c);
         drawHud(c);
     }
 
-    private void drawTrail(Canvas c) {
-        if (trail.size() < 2) return;
-        List<double[]> pts = new ArrayList<>(trail);
-        float px = 0, py = 0;
-        boolean have = false;
+    /** Build a Canvas path from {lat,lon} points, breaking subpaths at the date line. */
+    private void buildPath(List<double[]> pts, Canvas c, Paint paint) {
+        Path path = new Path();
+        boolean started = false;
+        double lastLon = 0;
         for (double[] p : pts) {
             float x = xOf(p[1]), y = yOf(p[0]);
-            if (have && Math.abs(p[1] - lastLon) < 180) {  // skip the date-line wrap
-                c.drawLine(px, py, x, y, trailPaint);
-            }
-            px = x; py = y; lastLon = p[1]; have = true;
+            if (!started || Math.abs(p[1] - lastLon) > 180) path.moveTo(x, y);
+            else path.lineTo(x, y);
+            started = true; lastLon = p[1];
         }
+        c.drawPath(path, paint);
     }
-    private double lastLon;
+
+    private void drawTitleBar(Canvas c) {
+        c.drawRect(0, 0, getWidth(), barH, barPaint);
+        if (nasa != null) c.drawBitmap(nasa, nasaSrc, nasaDst, logoPaint);
+        float tx = nasaDst.right + dp(16);
+        c.drawText("INTERNATIONAL SPACE STATION", tx, barH / 2f - dp(2), titlePaint);
+        c.drawText("LIVE ORBITAL GROUND TRACK", tx, barH / 2f + dp(18), subPaint);
+    }
 
     private void drawHud(Canvas c) {
-        // Title strip, top-left.
-        c.drawText("◉ ISS — LIVE GROUND TRACK", dp(16), mapT > dp(28) ? mapT - dp(10) : dp(22), title);
-
-        // Telemetry panel along the bottom.
-        float ph = dp(96);
+        float ph = dp(92);
         float pt = getHeight() - ph;
         c.drawRect(0, pt, getWidth(), getHeight(), panelPaint);
+        c.drawRect(0, pt, getWidth(), pt + dp(3), barPaint);   // NASA-blue rule
 
         float colW = getWidth() / 5f;
-        float baseY = pt + dp(36);
+        float baseY = pt + dp(34);
         if (pos != null) {
             cell(c, 0, colW, baseY, "LATITUDE",  fmtDeg(pos.lat, "N", "S"));
             cell(c, 1, colW, baseY, "LONGITUDE", fmtDeg(pos.lon, "E", "W"));
@@ -172,7 +195,7 @@ class TrackerView extends View {
             cell(c, 4, colW, baseY, "OVER",      GeoRegion.describe(pos.lat, pos.lon));
 
             String vis = pos.visibility.isEmpty() ? "" : "  •  " + cap(pos.visibility);
-            c.drawText(status + vis, dp(16), getHeight() - dp(14), label);
+            c.drawText(status + vis, dp(16), getHeight() - dp(12), label);
         } else {
             c.drawText(status, dp(16), pt + dp(52), value);
         }
@@ -181,7 +204,7 @@ class TrackerView extends View {
     private void cell(Canvas c, int col, float colW, float baseY, String lab, String val) {
         float x = col * colW + dp(16);
         c.drawText(lab, x, baseY, label);
-        c.drawText(val, x, baseY + dp(30), value);
+        c.drawText(val, x, baseY + dp(28), value);
     }
 
     private static String fmtDeg(double v, String pos, String neg) {
