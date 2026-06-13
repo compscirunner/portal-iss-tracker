@@ -10,6 +10,9 @@ the ISS**, a **live orbital ground track**, the **people-in-space roster**, plus
 space-weather, launch, Deep Space Network and asteroid widgets — all from free,
 **no-API-key** sources.
 
+[![Get it on OpenPortal](https://andronedev.github.io/openportal/openportal-badge.svg)](https://andronedev.github.io/openportal/apps/com.portal.isstracker)
+
+
 |  Landscape (2019 Portal, 1280×800)  |  Portrait (Portal+, 1920×1080)  |
 |:---:|:---:|
 | ![landscape](docs/dashboard-landscape.png) | ![portrait](docs/dashboard-portrait.png) |
