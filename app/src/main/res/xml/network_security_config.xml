@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- wheretheiss.at is HTTPS. Open Notify (crew roster) is HTTP-only, so allow
+     cleartext for just that host; everything else stays TLS-only. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">open-notify.org</domain>
+    </domain-config>
+</network-security-config>

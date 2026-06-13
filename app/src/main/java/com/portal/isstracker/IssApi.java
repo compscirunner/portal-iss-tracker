@@ -1,0 +1,88 @@
+package com.portal.isstracker;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Thin client for the two free, key-less APIs the tracker uses:
+ *   - api.wheretheiss.at  -> live ISS ground position + telemetry (HTTPS)
+ *   - api.open-notify.org -> who is currently in space (HTTP only)
+ * All methods block; call them from a worker thread.
+ */
+final class IssApi {
+
+    private static final String POS_URL =
+            "https://api.wheretheiss.at/v1/satellites/25544";
+    private static final String CREW_URL =
+            "http://api.open-notify.org/astros.json";
+
+    /** A single ISS fix. Altitude in km, velocity in km/h. */
+    static final class Position {
+        double lat, lon, altKm, velKmh, footprintKm;
+        String visibility = "";
+        long timestamp;   // unix seconds, from the API
+    }
+
+    static final class CrewMember {
+        final String name, craft;
+        CrewMember(String name, String craft) { this.name = name; this.craft = craft; }
+    }
+
+    static Position fetchPosition() throws Exception {
+        JSONObject o = new JSONObject(httpGet(POS_URL));
+        Position p = new Position();
+        p.lat = o.getDouble("latitude");
+        p.lon = o.getDouble("longitude");
+        p.altKm = o.getDouble("altitude");
+        p.velKmh = o.getDouble("velocity");
+        p.footprintKm = o.optDouble("footprint", 0);
+        p.visibility = o.optString("visibility", "");
+        p.timestamp = o.optLong("timestamp", System.currentTimeMillis() / 1000L);
+        return p;
+    }
+
+    static List<CrewMember> fetchCrew() throws Exception {
+        JSONObject o = new JSONObject(httpGet(CREW_URL));
+        JSONArray people = o.getJSONArray("people");
+        List<CrewMember> out = new ArrayList<>();
+        for (int i = 0; i < people.length(); i++) {
+            JSONObject m = people.getJSONObject(i);
+            out.add(new CrewMember(m.getString("name"), m.optString("craft", "")));
+        }
+        return out;
+    }
+
+    private static String httpGet(String url) throws Exception {
+        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        try {
+            c.setConnectTimeout(8000);
+            c.setReadTimeout(8000);
+            c.setRequestProperty("User-Agent", "PortalIssTracker/1.0");
+            c.setRequestProperty("Accept", "application/json");
+            int code = c.getResponseCode();
+            InputStream in = (code >= 200 && code < 300) ? c.getInputStream() : c.getErrorStream();
+            if (in == null) throw new Exception("HTTP " + code + " (no body) from " + url);
+            StringBuilder sb = new StringBuilder();
+            try (BufferedReader r = new BufferedReader(
+                    new InputStreamReader(in, StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = r.readLine()) != null) sb.append(line);
+            }
+            if (code < 200 || code >= 300) throw new Exception("HTTP " + code + " from " + url);
+            return sb.toString();
+        } finally {
+            c.disconnect();
+        }
+    }
+
+    private IssApi() {}
+}
