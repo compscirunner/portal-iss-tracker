@@ -1,6 +1,7 @@
 package com.portal.isstracker;
 
 import android.app.Activity;
+import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.os.Bundle;
@@ -8,6 +9,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -61,48 +63,67 @@ public class MainActivity extends Activity {
         weatherView = new WeatherView(this);
         feedView = new FeedView(this);
         ticker = new Ticker(this);
-
-        // Left (hero): labelled live ISS camera, ~64% of the width.
-        LinearLayout leftCol = new LinearLayout(this);
-        leftCol.setOrientation(LinearLayout.VERTICAL);
-        leftCol.addView(feedLabel(), new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(34)));
-        leftCol.addView(feedView, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
-
-        // Rotating widget panel: humans in space ⇄ space weather (tap to advance).
-        FrameLayout widgetPanel = new FrameLayout(this);
-        widgetPanel.addView(crewView);
-        widgetPanel.addView(weatherView);
         widgets = new View[]{crewView, weatherView};
         showWidget(0);
+
+        buildLayout();
+        clock.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+    }
+
+    /** (Re)assemble the view tree for the current orientation, reusing the same
+     *  view instances so rotating doesn't reload the live feed. Landscape puts
+     *  the video beside a map/widget column; portrait stacks them. */
+    private void buildLayout() {
+        boolean portrait = getResources().getConfiguration().orientation
+                == Configuration.ORIENTATION_PORTRAIT;
+        for (View v : new View[]{feedView, tracker, crewView, weatherView, ticker}) detach(v);
+
+        LinearLayout feedCol = new LinearLayout(this);   // label + video
+        feedCol.setOrientation(LinearLayout.VERTICAL);
+        feedCol.addView(feedLabel(), new LinearLayout.LayoutParams(MATCH, dp(34)));
+        feedCol.addView(feedView, new LinearLayout.LayoutParams(MATCH, 0, 1f));
+
+        FrameLayout widgetPanel = new FrameLayout(this);   // humans ⇄ weather
+        widgetPanel.addView(crewView);
+        widgetPanel.addView(weatherView);
         widgetPanel.setOnClickListener(v -> { showWidget(widgetIdx + 1); restartWidgetCycle(); });
 
-        // Right column: map+HUD over the rotating widget panel.
-        LinearLayout rightCol = new LinearLayout(this);
-        rightCol.setOrientation(LinearLayout.VERTICAL);
-        rightCol.addView(tracker, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 0.46f));
-        rightCol.addView(widgetPanel, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 0.54f));
-
-        LinearLayout content = new LinearLayout(this);
-        content.setOrientation(LinearLayout.HORIZONTAL);
-        content.addView(leftCol, new LinearLayout.LayoutParams(0,
-                LinearLayout.LayoutParams.MATCH_PARENT, 0.64f));
-        content.addView(rightCol, new LinearLayout.LayoutParams(0,
-                LinearLayout.LayoutParams.MATCH_PARENT, 0.36f));
-
-        // Stack the content over the full-width ticker.
         LinearLayout outer = new LinearLayout(this);
         outer.setOrientation(LinearLayout.VERTICAL);
-        outer.addView(content, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
-        outer.addView(ticker, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(46)));
-        setContentView(outer);
 
-        clock.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+        if (portrait) {
+            // Video on top, map and widget panel stacked below, then the ticker.
+            outer.addView(feedCol, new LinearLayout.LayoutParams(MATCH, 0, 0.42f));
+            outer.addView(tracker, new LinearLayout.LayoutParams(MATCH, 0, 0.29f));
+            outer.addView(widgetPanel, new LinearLayout.LayoutParams(MATCH, 0, 0.29f));
+        } else {
+            // Video left (~64%); map over the widget panel on the right.
+            LinearLayout rightCol = new LinearLayout(this);
+            rightCol.setOrientation(LinearLayout.VERTICAL);
+            rightCol.addView(tracker, new LinearLayout.LayoutParams(MATCH, 0, 0.46f));
+            rightCol.addView(widgetPanel, new LinearLayout.LayoutParams(MATCH, 0, 0.54f));
+
+            LinearLayout content = new LinearLayout(this);
+            content.setOrientation(LinearLayout.HORIZONTAL);
+            content.addView(feedCol, new LinearLayout.LayoutParams(0, MATCH, 0.64f));
+            content.addView(rightCol, new LinearLayout.LayoutParams(0, MATCH, 0.36f));
+            outer.addView(content, new LinearLayout.LayoutParams(MATCH, 0, 1f));
+        }
+        outer.addView(ticker, new LinearLayout.LayoutParams(MATCH, dp(46)));
+        setContentView(outer);
+    }
+
+    private static final int MATCH = LinearLayout.LayoutParams.MATCH_PARENT;
+
+    private static void detach(View v) {
+        if (v.getParent() instanceof ViewGroup) ((ViewGroup) v.getParent()).removeView(v);
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        buildLayout();
+        goImmersive();
     }
 
     private TextView feedLabel() {

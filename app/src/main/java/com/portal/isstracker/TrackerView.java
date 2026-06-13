@@ -206,31 +206,38 @@ class TrackerView extends View {
     }
 
     private void drawHud(Canvas c) {
-        float ph = dp(92);
+        if (pos == null) {
+            float pt = getHeight() - dp(40);
+            c.drawRect(0, pt, getWidth(), getHeight(), panelPaint);
+            c.drawText(status, dp(16), pt + dp(26), value);
+            return;
+        }
+
+        String[][] cells = {
+                {"LATITUDE",  fmtDeg(pos.lat, "N", "S")},
+                {"LONGITUDE", fmtDeg(pos.lon, "E", "W")},
+                {"ALTITUDE",  String.format(Locale.US, "%.1f km", pos.altKm)},
+                {"VELOCITY",  String.format(Locale.US, "%,.0f km/h", pos.velKmh)},
+                {"OVER",      GeoRegion.describe(pos.lat, pos.lon)},
+        };
+        // Adaptive grid: fewer columns (wrapping to rows) on a narrow panel.
+        int cols = Math.max(3, Math.min(5, (int) (getWidth() / dp(135))));
+        int rows = (int) Math.ceil(cells.length / (float) cols);
+        float rowH = dp(44);
+        float ph = dp(8) + rows * rowH + dp(22);
         float pt = getHeight() - ph;
         c.drawRect(0, pt, getWidth(), getHeight(), panelPaint);
         c.drawRect(0, pt, getWidth(), pt + dp(3), barPaint);   // NASA-blue rule
 
-        float colW = getWidth() / 5f;
-        float baseY = pt + dp(34);
-        if (pos != null) {
-            cell(c, 0, colW, baseY, "LATITUDE",  fmtDeg(pos.lat, "N", "S"));
-            cell(c, 1, colW, baseY, "LONGITUDE", fmtDeg(pos.lon, "E", "W"));
-            cell(c, 2, colW, baseY, "ALTITUDE",  String.format(Locale.US, "%.1f km", pos.altKm));
-            cell(c, 3, colW, baseY, "VELOCITY",  String.format(Locale.US, "%,.0f km/h", pos.velKmh));
-            cell(c, 4, colW, baseY, "OVER",      GeoRegion.describe(pos.lat, pos.lon));
-
-            String vis = pos.visibility.isEmpty() ? "" : "  •  " + cap(pos.visibility);
-            c.drawText(status + vis, dp(16), getHeight() - dp(12), label);
-        } else {
-            c.drawText(status, dp(16), pt + dp(52), value);
+        float colW = getWidth() / (float) cols;
+        for (int i = 0; i < cells.length; i++) {
+            float x = (i % cols) * colW + dp(14);
+            float y = pt + dp(24) + (i / cols) * rowH;
+            c.drawText(cells[i][0], x, y, label);
+            c.drawText(cells[i][1], x, y + dp(24), value);
         }
-    }
-
-    private void cell(Canvas c, int col, float colW, float baseY, String lab, String val) {
-        float x = col * colW + dp(16);
-        c.drawText(lab, x, baseY, label);
-        c.drawText(val, x, baseY + dp(28), value);
+        String vis = pos.visibility.isEmpty() ? "" : "  •  " + cap(pos.visibility);
+        c.drawText(status + vis, dp(14), getHeight() - dp(8), label);
     }
 
     private static String fmtDeg(double v, String pos, String neg) {

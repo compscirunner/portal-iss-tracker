@@ -11,26 +11,38 @@ on one screen.
 
 - **Live ISS video (hero panel)** — Sen's real 4K cameras on the ISS
   (the SpaceTV-1 payload), streamed from YouTube. Dark when the station is on the
-  night side of Earth — which the map's telemetry explains.
+  night side of Earth — which the map's terminator explains.
 - **Live orbital ground track** — the ISS on an equirectangular world map with the
-  predicted ground-track path (solid where it's been, dashed NASA-red ahead) and a
-  visibility-footprint circle.
-- **Telemetry HUD** — latitude, longitude, altitude (km), velocity (km/h), a coarse
-  offline "over region" label (continent/ocean), and day/night visibility.
-- **Humans in Space** — the current crew grouped by spacecraft (ISS, Tiangong, …).
-- NASA-blue title bars with the meatball insignia; fullscreen, landscape,
-  screen-kept-on — meant to be left running on the panel.
+  predicted ground-track path (solid where it's been, dashed NASA-red ahead), a
+  visibility-footprint circle, and a shaded **day/night terminator**.
+- **Telemetry HUD** — latitude, longitude, altitude, velocity, a coarse offline
+  "over region" label, and day/night visibility (adaptive column grid).
+- **Rotating widget panel** — cycles **Humans in Space** (crew by spacecraft) and
+  **Space Weather** (NOAA Kp index, solar wind, X-ray flare class + the live NASA
+  SDO Sun image). Tap to advance.
+- **Footer ticker** — rotates the **next launch** (live T- countdown), the **Deep
+  Space Network** (which spacecraft is talking to which antenna right now), and the
+  next **asteroid close approach**.
+- NASA-blue title bars with the meatball insignia; fullscreen, screen-kept-on, and
+  **responsive to orientation** (landscape side-by-side / portrait stacked) and to
+  screen size (Portal+ 1920×1080 and the 2019 Portal 1280×800).
 
 ## Data sources (free, no API key)
 
 | Feed | Source | Notes |
 |------|--------|-------|
-| ISS position + telemetry | `https://api.wheretheiss.at/v1/satellites/25544` | HTTPS, ~5 s refresh |
+| ISS position + telemetry | `https://api.wheretheiss.at/v1/satellites/25544` | HTTPS, ~5 s; also gives the sub-solar point for the terminator |
 | People in space | `http://api.open-notify.org/astros.json` | HTTP only → scoped cleartext allow-list |
-| Live ISS video | [Sen](https://www.sen.com/live) on YouTube (`@Sen`) | embeddable; played in a WebView |
+| Live ISS video | [Sen](https://www.sen.com/live) on YouTube (`@Sen`) | embeddable; live id scraped at startup; played in a WebView |
+| Next launch | `https://ll.thespacedevs.com/2.2.0/launch/upcoming/` | The Space Devs Launch Library 2; 30-min poll |
+| Space weather | NOAA SWPC (`services.swpc.noaa.gov`) | Kp index, solar-wind speed, GOES X-ray flux |
+| Deep Space Network | `https://eyes.nasa.gov/dsn/data/dsn.xml` | which spacecraft ↔ which antenna, now |
+| Asteroid close approach | `https://ssd-api.jpl.nasa.gov/cad.api` | JPL CAD; next near-Earth flyby |
+| Sun image | `https://sdo.gsfc.nasa.gov/.../latest_512_0193.jpg` | NASA SDO 193Å, refreshed every 10 min |
 
-Position/crew/map are pure platform (`HttpURLConnection` + `org.json` + `Canvas`);
-the video is a `WebView`. No Google Play Services, Maps SDK, or login required.
+**Every source is free and needs no API key.** Position/crew/map/weather/launch
+are pure platform (`HttpURLConnection` + `org.json` + `Canvas`); only the video
+uses a `WebView`. No Google Play Services, Maps SDK, or login required.
 
 ## The live-feed wrinkle (Meta Portal WebView)
 
@@ -73,20 +85,24 @@ Gradle 8.10.2, SDK platform-34**. `minSdk 24`, `targetSdk 34`
 
 ```
 app/src/main/java/com/portal/isstracker/
-  MainActivity.java   kiosk lifecycle, polling cadence, side-by-side layout
-  IssApi.java         wheretheiss.at + open-notify clients
-  FeedView.java       live ISS video (WebView + localhost embed server)
-  TrackerView.java    world map + predicted ground track + telemetry HUD (Canvas)
+  MainActivity.java   kiosk lifecycle, polling, orientation-aware layout, panel rotation
+  IssApi.java         clients: wheretheiss.at, open-notify, Launch Library 2, NOAA, DSN, JPL
+  FeedView.java       live ISS video (WebView + localhost embed server, live-id scrape)
+  TrackerView.java    world map + ground track + day/night terminator + adaptive HUD
   OrbitTrack.java     circular-orbit model for the ground-track path
-  CrewView.java       people-in-space roster
+  CrewView.java       people-in-space roster (auto-scales to fit)
+  WeatherView.java    space weather + live SDO Sun image
+  Ticker.java         rotating footer: launch countdown / DSN / asteroid
   GeoRegion.java      offline bounding-box "over region" classifier
 app/src/main/assets/world.jpg   equirectangular world map (public domain, Wikimedia)
 app/src/main/assets/nasa.png    NASA meatball insignia (public domain)
 app/src/main/res/xml/network_security_config.xml   cleartext allow-list (open-notify, localhost)
 ```
 
-On-screen: live video fills the left ~64%; the map+HUD and crew roster stack in the
-right column.
+Layout adapts to orientation: **landscape** = video left (~64%) with map+HUD over the
+rotating widget panel on the right; **portrait** = video on top, then map, then the
+widget panel; the ticker spans the bottom in both. Verified on the Portal+
+(1920×1080, rotates) and the 2019 Portal (1280×800).
 
 ## Credits
 

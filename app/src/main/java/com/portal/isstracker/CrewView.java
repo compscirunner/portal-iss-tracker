@@ -81,9 +81,9 @@ class CrewView extends View {
         c.drawText("HUMANS IN SPACE — " + crew.size(), tx, barH / 2f - dp(2), title);
         c.drawText("CURRENT ON-ORBIT CREW", tx, barH / 2f + dp(18), sub);
 
-        float x = dp(40), y = barH + dp(48);
+        float x = dp(40);
         if (crew.isEmpty()) {
-            c.drawText(status, x, y, name);
+            c.drawText(status, x, barH + dp(48), name);
             return;
         }
 
@@ -93,17 +93,27 @@ class CrewView extends View {
             byCraft.computeIfAbsent(key, k -> new ArrayList<>()).add(m.name);
         }
 
-        float rowY = y;
+        // Scale row pitch + text so the whole roster fits above the footer
+        // (matters on the smaller Portal, where 12 names overflow at full size).
+        int groups = byCraft.size(), members = crew.size();
+        float craftP = dp(34), nameP = dp(32), gap = dp(18), startGap = dp(44);
+        float avail = getHeight() - barH - dp(34);
+        float needed = startGap + groups * (craftP + gap) + members * nameP;
+        float s = Math.min(1f, avail / needed);
+        craft.setTextSize(sp(16) * Math.max(0.7f, s));
+        name.setTextSize(sp(20) * Math.max(0.7f, s));
+
+        float rowY = barH + startGap * s;
         for (Map.Entry<String, List<String>> e : byCraft.entrySet()) {
             c.drawText("▸ " + e.getKey() + "  (" + e.getValue().size() + ")", x, rowY, craft);
-            rowY += dp(34);
+            rowY += craftP * s;
             for (String person : e.getValue()) {
                 c.drawText("•  " + person, x + dp(12), rowY, name);
-                rowY += dp(32);
+                rowY += nameP * s;
             }
-            rowY += dp(20);
+            rowY += gap * s;
         }
-        c.drawText(status, x, getHeight() - dp(22), foot);
+        c.drawText(status, x, getHeight() - dp(20), foot);
     }
 
     private float dp(float v) { return v * getResources().getDisplayMetrics().density; }
