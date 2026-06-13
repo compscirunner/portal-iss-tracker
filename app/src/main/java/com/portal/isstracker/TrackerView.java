@@ -41,6 +41,7 @@ class TrackerView extends View {
     private final Paint logoPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
     private final Paint bg = new Paint();
     private final Paint barPaint = new Paint();
+    private final Paint nightPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint trackPast = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint trackFuture = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint footprint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -69,6 +70,8 @@ class TrackerView extends View {
 
         bg.setColor(0xFF000610);
         barPaint.setColor(NASA_BLUE);
+        nightPaint.setColor(0x66000B1A);   // translucent night shading
+        nightPaint.setStyle(Paint.Style.FILL);
 
         trackPast.setStyle(Paint.Style.STROKE);
         trackPast.setColor(0xFFFFFFFF);
@@ -139,6 +142,8 @@ class TrackerView extends View {
         c.drawRect(0, 0, getWidth(), getHeight(), bg);
         if (world != null) c.drawBitmap(world, srcRect, dstRect, mapPaint);
 
+        drawTerminator(c);
+
         if (pos != null) {
             // Predicted ground track: solid for the recent past, dashed ahead.
             buildPath(OrbitTrack.predict(pos.lat, pos.lon, northbound, -28, 0, 1.0), c, trackPast);
@@ -155,6 +160,27 @@ class TrackerView extends View {
 
         drawTitleBar(c);
         drawHud(c);
+    }
+
+    /** Shade Earth's night hemisphere using the sub-solar point. The terminator
+     *  latitude for each longitude is lat = atan(-cos(lon-sunLon)/tan(sunLat));
+     *  night lies toward the pole opposite the sun. */
+    private void drawTerminator(Canvas c) {
+        if (pos == null) return;
+        double sunLat = Math.toRadians(Math.abs(pos.solarLat) < 1e-3 ? 1e-3 : pos.solarLat);
+        Path path = new Path();
+        boolean started = false;
+        for (int lon = -180; lon <= 180; lon += 2) {
+            double lr = Math.toRadians(lon - pos.solarLon);
+            double latT = Math.toDegrees(Math.atan(-Math.cos(lr) / Math.tan(sunLat)));
+            float x = xOf(lon), y = yOf(latT);
+            if (!started) { path.moveTo(x, y); started = true; } else path.lineTo(x, y);
+        }
+        double nightPole = pos.solarLat > 0 ? -90 : 90;   // dark pole is opposite the sun
+        path.lineTo(xOf(180), yOf(nightPole));
+        path.lineTo(xOf(-180), yOf(nightPole));
+        path.close();
+        c.drawPath(path, nightPaint);
     }
 
     /** Build a Canvas path from {lat,lon} points, breaking subpaths at the date line. */

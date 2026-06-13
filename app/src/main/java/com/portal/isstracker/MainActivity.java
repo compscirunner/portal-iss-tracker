@@ -1,14 +1,15 @@
 package com.portal.isstracker;
 
 import android.app.Activity;
+import android.graphics.Color;
+import android.graphics.Typeface;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.graphics.Color;
-import android.graphics.Typeface;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -20,15 +21,20 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Kiosk-style ISS display for Meta Portal (no Google services needed).
- * Shows the live map/telemetry and the people-in-space roster side by side on
- * one screen, refreshing the ground position every few seconds.
+ * Kiosk-style ISS dashboard for Meta Portal (no Google services needed):
+ * a live ISS video feed (hero), a ground-track map with day/night terminator,
+ * a rotating widget panel (humans in space / space weather), and a footer
+ * ticker (next launch / Deep Space Network / asteroid close approach).
  */
 public class MainActivity extends Activity {
 
-    private static final long POS_INTERVAL_MS    = 5_000;        // position refresh
-    private static final long CREW_INTERVAL_MS   = 5 * 60_000;   // crew refresh
-    private static final long LAUNCH_INTERVAL_MS = 30 * 60_000;  // next-launch refresh
+    private static final long POS_INTERVAL_MS      = 5_000;        // position refresh
+    private static final long CREW_INTERVAL_MS     = 5 * 60_000;   // crew refresh
+    private static final long LAUNCH_INTERVAL_MS   = 30 * 60_000;  // next-launch refresh
+    private static final long WEATHER_INTERVAL_MS  = 10 * 60_000;  // space-weather refresh
+    private static final long DSN_INTERVAL_MS      = 2 * 60_000;   // DSN refresh
+    private static final long ASTEROID_INTERVAL_MS = 6 * 3600_000L;// close-approach refresh
+    private static final long WIDGET_DWELL_MS      = 14_000;       // rotate the widget panel
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final ExecutorService net = Executors.newSingleThreadExecutor();
@@ -36,25 +42,27 @@ public class MainActivity extends Activity {
 
     private TrackerView tracker;
     private CrewView crewView;
+    private WeatherView weatherView;
     private FeedView feedView;
-    private LaunchBar launchBar;
+    private Ticker ticker;
+
+    private View[] widgets;
+    private int widgetIdx = 0;
     private volatile boolean running = true;
-    private long lastCrewFetch = 0;
-    private long lastLaunchFetch = 0;
+    private long lastCrewFetch, lastLaunchFetch, lastWeatherFetch, lastDsnFetch, lastAsteroidFetch;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.HORIZONTAL);
-
         tracker = new TrackerView(this);
         crewView = new CrewView(this);
+        weatherView = new WeatherView(this);
         feedView = new FeedView(this);
+        ticker = new Ticker(this);
 
-        // Left (hero): labelled live ISS camera, taking ~64% of the width.
+        // Left (hero): labelled live ISS camera, ~64% of the width.
         LinearLayout leftCol = new LinearLayout(this);
         leftCol.setOrientation(LinearLayout.VERTICAL);
         leftCol.addView(feedLabel(), new LinearLayout.LayoutParams(
@@ -62,26 +70,35 @@ public class MainActivity extends Activity {
         leftCol.addView(feedView, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
-        // Right column: map+HUD over the crew roster.
+        // Rotating widget panel: humans in space ⇄ space weather (tap to advance).
+        FrameLayout widgetPanel = new FrameLayout(this);
+        widgetPanel.addView(crewView);
+        widgetPanel.addView(weatherView);
+        widgets = new View[]{crewView, weatherView};
+        showWidget(0);
+        widgetPanel.setOnClickListener(v -> { showWidget(widgetIdx + 1); restartWidgetCycle(); });
+
+        // Right column: map+HUD over the rotating widget panel.
         LinearLayout rightCol = new LinearLayout(this);
         rightCol.setOrientation(LinearLayout.VERTICAL);
         rightCol.addView(tracker, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 0.52f));
-        rightCol.addView(crewView, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 0.48f));
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 0.46f));
+        rightCol.addView(widgetPanel, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 0.54f));
 
-        root.addView(leftCol, new LinearLayout.LayoutParams(0,
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.HORIZONTAL);
+        content.addView(leftCol, new LinearLayout.LayoutParams(0,
                 LinearLayout.LayoutParams.MATCH_PARENT, 0.64f));
-        root.addView(rightCol, new LinearLayout.LayoutParams(0,
+        content.addView(rightCol, new LinearLayout.LayoutParams(0,
                 LinearLayout.LayoutParams.MATCH_PARENT, 0.36f));
 
-        // Stack the main content over a full-width next-launch ticker.
-        launchBar = new LaunchBar(this);
+        // Stack the content over the full-width ticker.
         LinearLayout outer = new LinearLayout(this);
         outer.setOrientation(LinearLayout.VERTICAL);
-        outer.addView(root, new LinearLayout.LayoutParams(
+        outer.addView(content, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
-        outer.addView(launchBar, new LinearLayout.LayoutParams(
+        outer.addView(ticker, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(46)));
         setContentView(outer);
 
@@ -99,6 +116,24 @@ public class MainActivity extends Activity {
         t.setPadding(dp(14), 0, 0, 0);
         t.setBackgroundColor(0xFF0B3D91);   // NASA blue
         return t;
+    }
+
+    private void showWidget(int i) {
+        widgetIdx = ((i % widgets.length) + widgets.length) % widgets.length;
+        for (int k = 0; k < widgets.length; k++)
+            widgets[k].setVisibility(k == widgetIdx ? View.VISIBLE : View.GONE);
+    }
+
+    private final Runnable widgetCycle = new Runnable() {
+        @Override public void run() {
+            if (!running) return;
+            showWidget(widgetIdx + 1);
+            ui.postDelayed(this, WIDGET_DWELL_MS);
+        }
+    };
+    private void restartWidgetCycle() {
+        ui.removeCallbacks(widgetCycle);
+        ui.postDelayed(widgetCycle, WIDGET_DWELL_MS);
     }
 
     private int dp(float v) { return Math.round(v * getResources().getDisplayMetrics().density); }
@@ -125,6 +160,7 @@ public class MainActivity extends Activity {
         running = true;
         if (feedView != null) feedView.resume();
         ui.post(pollPosition);
+        ui.postDelayed(widgetCycle, WIDGET_DWELL_MS);
     }
 
     @Override
@@ -158,14 +194,16 @@ public class MainActivity extends Activity {
             });
             maybeFetchCrew();
             maybeFetchLaunch();
+            maybeFetchWeather();
+            maybeFetchDsn();
+            maybeFetchAsteroid();
             ui.postDelayed(this, POS_INTERVAL_MS);
         }
     };
 
     private void maybeFetchCrew() {
-        long now = System.currentTimeMillis();
-        if (now - lastCrewFetch < CREW_INTERVAL_MS) return;
-        lastCrewFetch = now;
+        if (System.currentTimeMillis() - lastCrewFetch < CREW_INTERVAL_MS) return;
+        lastCrewFetch = System.currentTimeMillis();
         net.execute(() -> {
             try {
                 List<IssApi.CrewMember> crew = IssApi.fetchCrew();
@@ -174,24 +212,56 @@ public class MainActivity extends Activity {
                     crewView.setStatus("Open Notify  •  " + clock.format(new Date()));
                 });
             } catch (Exception e) {
-                lastCrewFetch = 0;   // let the next poll retry instead of waiting 5 min
+                lastCrewFetch = 0;
                 ui.post(() -> crewView.setStatus("Crew feed unavailable — retrying…"));
             }
         });
     }
 
     private void maybeFetchLaunch() {
-        long now = System.currentTimeMillis();
-        if (now - lastLaunchFetch < LAUNCH_INTERVAL_MS) return;
-        lastLaunchFetch = now;
+        if (System.currentTimeMillis() - lastLaunchFetch < LAUNCH_INTERVAL_MS) return;
+        lastLaunchFetch = System.currentTimeMillis();
         net.execute(() -> {
             try {
                 IssApi.LaunchInfo li = IssApi.fetchNextLaunch();
-                ui.post(() -> launchBar.setLaunch(li));
+                ui.post(() -> ticker.setLaunch(li));
+            } catch (Exception e) { lastLaunchFetch = 0; }
+        });
+    }
+
+    private void maybeFetchWeather() {
+        if (System.currentTimeMillis() - lastWeatherFetch < WEATHER_INTERVAL_MS) return;
+        lastWeatherFetch = System.currentTimeMillis();
+        net.execute(() -> {
+            try {
+                IssApi.SpaceWeather sw = IssApi.fetchSpaceWeather();
+                ui.post(() -> weatherView.setWeather(sw, clock.format(new Date())));
             } catch (Exception e) {
-                lastLaunchFetch = 0;   // retry next poll
-                ui.post(() -> launchBar.setStatus("Launch feed unavailable"));
+                lastWeatherFetch = 0;
+                ui.post(() -> weatherView.setStatus("Space weather unavailable"));
             }
+        });
+    }
+
+    private void maybeFetchDsn() {
+        if (System.currentTimeMillis() - lastDsnFetch < DSN_INTERVAL_MS) return;
+        lastDsnFetch = System.currentTimeMillis();
+        net.execute(() -> {
+            try {
+                String dsn = IssApi.fetchDsn();
+                ui.post(() -> ticker.setDsn(dsn));
+            } catch (Exception e) { lastDsnFetch = 0; }
+        });
+    }
+
+    private void maybeFetchAsteroid() {
+        if (System.currentTimeMillis() - lastAsteroidFetch < ASTEROID_INTERVAL_MS) return;
+        lastAsteroidFetch = System.currentTimeMillis();
+        net.execute(() -> {
+            try {
+                String a = IssApi.fetchAsteroid();
+                ui.post(() -> ticker.setAsteroid(a));
+            } catch (Exception e) { lastAsteroidFetch = 0; }
         });
     }
 }

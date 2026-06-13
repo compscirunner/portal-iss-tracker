@@ -8,15 +8,25 @@ import android.text.TextPaint;
 import android.text.TextUtils;
 import android.view.View;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 
-/** Full-width footer ticker: the next orbital launch with a live T- countdown. */
-class LaunchBar extends View {
+/**
+ * Full-width footer ticker that rotates through space facts: the next launch
+ * (with a live T- countdown), the Deep Space Network "now", and the next
+ * near-Earth asteroid close approach. Cycles every {@link #DWELL_S} seconds and
+ * advances on tap; empty items are skipped.
+ */
+class Ticker extends View {
 
     private static final int NASA_BLUE = 0xFF0B3D91;
     private static final int NASA_RED  = 0xFFFC3D21;
     private static final int WHITE     = 0xFFFFFFFF;
     private static final int LABEL     = 0xFFAFC6FF;
+    private static final int DWELL_S   = 9;
+
+    private static final int LAUNCH = 0, DSN = 1, ASTEROID = 2;
 
     private final Paint bg = new Paint();
     private final Paint rule = new Paint();
@@ -25,16 +35,20 @@ class LaunchBar extends View {
     private final TextPaint detail = new TextPaint(Paint.ANTI_ALIAS_FLAG);
 
     private IssApi.LaunchInfo launch;
-    private String status = "loading…";
+    private String dsn = "", asteroid = "";
+    private int mode = LAUNCH;
+    private int seconds = 0;
 
     private final Runnable tick = new Runnable() {
         @Override public void run() {
+            seconds++;
+            if (seconds % DWELL_S == 0) advance();
             invalidate();
-            postDelayed(this, 1000);   // live countdown
+            postDelayed(this, 1000);
         }
     };
 
-    LaunchBar(Context ctx) {
+    Ticker(Context ctx) {
         super(ctx);
         bg.setColor(NASA_BLUE);
         rule.setColor(NASA_RED);
@@ -42,41 +56,68 @@ class LaunchBar extends View {
         label.setColor(NASA_RED); label.setTypeface(mono); label.setTextSize(sp(13)); label.setLetterSpacing(0.12f);
         count.setColor(WHITE); count.setTypeface(mono); count.setTextSize(sp(20));
         detail.setColor(LABEL); detail.setTypeface(mono); detail.setTextSize(sp(15));
+        setOnClickListener(v -> advance());
     }
 
-    void setLaunch(IssApi.LaunchInfo li) { this.launch = li; invalidate(); }
-    void setStatus(String s) { this.status = s; invalidate(); }
+    void setLaunch(IssApi.LaunchInfo li) { launch = li; invalidate(); }
+    void setDsn(String s) { dsn = s == null ? "" : s; invalidate(); }
+    void setAsteroid(String s) { asteroid = s == null ? "" : s; invalidate(); }
 
     @Override protected void onAttachedToWindow() { super.onAttachedToWindow(); post(tick); }
     @Override protected void onDetachedFromWindow() { super.onDetachedFromWindow(); removeCallbacks(tick); }
 
+    private List<Integer> available() {
+        List<Integer> a = new ArrayList<>();
+        if (launch != null) a.add(LAUNCH);
+        if (!dsn.isEmpty()) a.add(DSN);
+        if (!asteroid.isEmpty()) a.add(ASTEROID);
+        return a;
+    }
+
+    private void advance() {
+        List<Integer> a = available();
+        if (a.isEmpty()) return;
+        int idx = a.indexOf(mode);
+        mode = a.get((idx + 1) % a.size());
+        invalidate();
+    }
+
     @Override
     protected void onDraw(Canvas c) {
         c.drawRect(0, 0, getWidth(), getHeight(), bg);
-        c.drawRect(0, 0, getWidth(), dp(2), rule);   // NASA-red top rule
+        c.drawRect(0, 0, getWidth(), dp(2), rule);
+
+        List<Integer> a = available();
+        if (!a.isEmpty() && !a.contains(mode)) mode = a.get(0);
 
         float y = getHeight() / 2f + sp(7);
         float x = dp(16);
-        c.drawText("NEXT LAUNCH", x, y, label);
-        x += label.measureText("NEXT LAUNCH") + dp(20);
+        String lab = mode == DSN ? "DEEP SPACE NETWORK"
+                   : mode == ASTEROID ? "CLOSE APPROACH" : "NEXT LAUNCH";
+        c.drawText(lab, x, y, label);
+        x += label.measureText(lab) + dp(20);
 
-        if (launch == null) {
-            c.drawText(status, x, y, detail);
-            return;
+        if (mode == LAUNCH && launch != null) {
+            String cd = countdown(launch.netMs);
+            c.drawText(cd, x, y, count);
+            x += count.measureText(cd) + dp(20);
+            StringBuilder d = new StringBuilder();
+            append(d, launch.name); append(d, launch.provider); append(d, launch.pad);
+            if (!launch.status.isEmpty()) append(d, "[" + launch.status + "]");
+            drawDetail(c, d.toString(), x, y);
+        } else if (mode == DSN) {
+            drawDetail(c, dsn, x, y);
+        } else if (mode == ASTEROID) {
+            drawDetail(c, asteroid, x, y);
+        } else {
+            c.drawText("acquiring telemetry…", x, y, detail);
         }
+    }
 
-        String cd = countdown(launch.netMs);
-        c.drawText(cd, x, y, count);
-        x += count.measureText(cd) + dp(20);
-
-        StringBuilder d = new StringBuilder();
-        append(d, launch.name);
-        append(d, launch.provider);
-        append(d, launch.pad);
-        if (!launch.status.isEmpty()) append(d, "[" + launch.status + "]");
+    private void drawDetail(Canvas c, String text, float x, float y) {
         float avail = Math.max(0, getWidth() - x - dp(16));
-        CharSequence clipped = TextUtils.ellipsize(d.toString(), detail, avail, TextUtils.TruncateAt.END);
-        c.drawText(clipped, 0, clipped.length(), x, y, detail);
+        CharSequence s = TextUtils.ellipsize(text, detail, avail, TextUtils.TruncateAt.END);
+        c.drawText(s, 0, s.length(), x, y, detail);
     }
 
     private static void append(StringBuilder sb, String part) {
